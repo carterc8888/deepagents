@@ -62,6 +62,12 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="reset",
     ),
     SlashCommand(
+        name="/diff",
+        description="Show file changes made in this session",
+        bypass_tier=BypassTier.QUEUED,
+        hidden_keywords="changes edits modifications",
+    ),
+    SlashCommand(
         name="/editor",
         description="Open prompt in external editor ($EDITOR)",
         bypass_tier=BypassTier.QUEUED,
