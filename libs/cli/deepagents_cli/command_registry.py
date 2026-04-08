@@ -73,6 +73,12 @@ COMMANDS: tuple[SlashCommand, ...] = (
         bypass_tier=BypassTier.QUEUED,
     ),
     SlashCommand(
+        name="/undo",
+        description="Revert the last file edit made by the agent",
+        bypass_tier=BypassTier.QUEUED,
+        hidden_keywords="revert rollback",
+    ),
+    SlashCommand(
         name="/mcp",
         description="Show active MCP servers and tools",
         bypass_tier=BypassTier.SIDE_EFFECT_FREE,

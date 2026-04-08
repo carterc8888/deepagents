@@ -139,3 +139,23 @@ def build_summary(changes: list[FileChange]) -> str:
     if creates:
         parts.append(f"{creates} new file{'s' if creates != 1 else ''}")
     return f"{len(files)} file{'s' if len(files) != 1 else ''} changed: {', '.join(parts)}"
+
+
+def get_last_undoable_change(
+    changes: list[FileChange],
+) -> FileChange | None:
+    """Return the most recent edit that can be reversed.
+
+    Only ``edit`` operations are undoable because the backend has no
+    ``delete`` method to remove files created by ``write_file``.
+
+    Args:
+        changes: Ordered list of file changes (oldest first).
+
+    Returns:
+        The last ``edit`` change, or ``None`` if there are no edits.
+    """
+    for change in reversed(changes):
+        if change.operation == "edit":
+            return change
+    return None

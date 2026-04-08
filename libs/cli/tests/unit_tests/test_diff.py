@@ -1,4 +1,4 @@
-"""Unit tests for the /diff slash command logic."""
+"""Unit tests for the /diff and /undo slash command logic."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from deepagents_cli.diff import (
     build_summary,
     build_unified_diff,
     extract_file_changes,
+    get_last_undoable_change,
 )
 
 
@@ -328,3 +329,40 @@ class TestBuildSummary:
         ]
         summary = build_summary(changes)
         assert "2 new files" in summary
+
+
+# ---------------------------------------------------------------------------
+# get_last_undoable_change
+# ---------------------------------------------------------------------------
+
+
+class TestGetLastUndoableChange:
+    """Tests for finding the last reversible edit."""
+
+    def test_returns_last_edit(self) -> None:
+        changes = [
+            FileChange("/a.py", "edit", "old1", "new1"),
+            FileChange("/b.py", "edit", "old2", "new2"),
+        ]
+        result = get_last_undoable_change(changes)
+        assert result is not None
+        assert result.file_path == "/b.py"
+
+    def test_skips_creates(self) -> None:
+        changes = [
+            FileChange("/a.py", "edit", "old", "new"),
+            FileChange("/b.py", "create", "", "content"),
+        ]
+        result = get_last_undoable_change(changes)
+        assert result is not None
+        assert result.file_path == "/a.py"
+
+    def test_only_creates_returns_none(self) -> None:
+        changes = [
+            FileChange("/a.py", "create", "", "a"),
+            FileChange("/b.py", "create", "", "b"),
+        ]
+        assert get_last_undoable_change(changes) is None
+
+    def test_empty_returns_none(self) -> None:
+        assert get_last_undoable_change([]) is None

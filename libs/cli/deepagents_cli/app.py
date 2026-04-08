@@ -2625,7 +2625,7 @@ class DeepAgentsApp(App):
         elif cmd == "/help":
             await self._mount_message(UserMessage(command))
             help_body = (
-                "Commands: /quit, /clear, /diff, /offload, /editor, /mcp, "
+                "Commands: /quit, /clear, /diff, /offload, /editor, /mcp, /undo, "
                 "/model [--model-params JSON] [--default], /reload, "
                 "/skill:<name>, /remember, /skill-creator, /theme, /tokens, "
                 "/threads, /trace, "
@@ -2701,6 +2701,9 @@ class DeepAgentsApp(App):
         elif cmd == "/diff":
             await self._mount_message(UserMessage(command))
             await self._handle_diff_command()
+        elif cmd == "/undo":
+            await self._mount_message(UserMessage(command))
+            await self._handle_undo_command()
         elif cmd == "/editor":
             await self.action_open_editor()
         elif cmd in {"/offload", "/compact"}:
@@ -3115,6 +3118,119 @@ class DeepAgentsApp(App):
                 await self._mount_message(
                     DiffMessage(diff_text, file_path=change.file_path)
                 )
+
+    async def _handle_undo_command(self) -> None:
+        """Revert the last file edit made by the agent."""
+        if not self._agent or not self._lc_thread_id:
+            await self._mount_message(
+                AppMessage("Nothing to undo \u2014 start a conversation first")
+            )
+            return
+
+        try:
+            state_values = await self._get_thread_state_values(self._lc_thread_id)
+        except Exception as exc:  # noqa: BLE001
+            await self._mount_message(ErrorMessage(f"Failed to read state: {exc}"))
+            return
+
+        messages = state_values.get("messages", [])
+        if not messages:
+            await self._mount_message(
+                AppMessage("Nothing to undo \u2014 start a conversation first")
+            )
+            return
+
+        if messages and isinstance(messages[0], dict):
+            from langchain_core.messages.utils import convert_to_messages
+
+            messages = convert_to_messages(messages)
+
+        from deepagents_cli.diff import extract_file_changes, get_last_undoable_change
+
+        changes = extract_file_changes(messages)
+        change = get_last_undoable_change(changes)
+
+        if change is None:
+            # Check if there are only write_file changes
+            if any(c.operation == "create" for c in changes):
+                await self._mount_message(
+                    AppMessage(
+                        "No edits to undo. New file creation cannot be "
+                        "reverted via /undo \u2014 delete the file manually."
+                    )
+                )
+            else:
+                await self._mount_message(
+                    AppMessage("No file edits to undo in this session")
+                )
+            return
+
+        # Reverse the edit directly on the filesystem.
+        # The backend may be None when server startup is deferred, so we
+        # perform the string replacement ourselves on the local file.
+        file_path = change.file_path
+        try:
+            path = Path(file_path)
+            content = await asyncio.to_thread(path.read_text, "utf-8")
+        except FileNotFoundError:
+            await self._mount_message(
+                ErrorMessage(f"Undo failed: {file_path} not found")
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            await self._mount_message(
+                ErrorMessage(f"Undo failed: {exc}")
+            )
+            return
+
+        if change.new_string not in content:
+            await self._mount_message(
+                ErrorMessage(
+                    f"Undo failed: the edited text was not found in "
+                    f"{file_path}. The file may have been modified since "
+                    f"the edit."
+                )
+            )
+            return
+
+        count = content.count(change.new_string)
+        if count > 1:
+            await self._mount_message(
+                ErrorMessage(
+                    f"Undo failed: the edited text appears {count} times "
+                    f"in {file_path}. Cannot safely determine which "
+                    f"occurrence to revert."
+                )
+            )
+            return
+
+        new_content = content.replace(change.new_string, change.old_string, 1)
+        try:
+            await asyncio.to_thread(path.write_text, new_content, "utf-8")
+        except Exception as exc:  # noqa: BLE001
+            await self._mount_message(
+                ErrorMessage(f"Undo failed: {exc}")
+            )
+            return
+
+        from deepagents_cli.diff import build_unified_diff, FileChange
+        from deepagents_cli.widgets.messages import DiffMessage
+
+        # Show the reverse diff
+        reverse = FileChange(
+            file_path=change.file_path,
+            operation="edit",
+            old_string=change.new_string,
+            new_string=change.old_string,
+        )
+        diff_text = build_unified_diff(reverse)
+        await self._mount_message(
+            AppMessage(f"Reverted last edit to {change.file_path}")
+        )
+        if diff_text:
+            await self._mount_message(
+                DiffMessage(diff_text, file_path=change.file_path)
+            )
 
     def _resolve_offload_budget_str(self) -> str | None:
         """Resolve the offload retention budget as a human-readable string.
